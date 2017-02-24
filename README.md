@@ -21,7 +21,7 @@ After much trial and error with various iterations I've managed to work out
 enough of the signal encoding to identify signals from the door sensors.
 
 A transmission appears to be a simple on-off-keying (OOK) 8-byte word along
-with a syncronisation signal.
+with a synchronisation signal.
 
 The various signals appear to be (as consecutive pulse lengths in microseconds):
 

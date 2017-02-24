@@ -172,7 +172,7 @@ void sync(){
 /*
  * Get data pulse durations and store in samples.
  *
- * Gets all data pulses ready for decode. Will dectect
+ * Gets all data pulses ready for decode. Will detect
  * the end of our 65bit word and receive the re-sync 
  * signal before continuing.
  */
