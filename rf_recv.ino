@@ -23,10 +23,14 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <PubSubClient.h>
+#include <ESP8266WiFi.h>
+
+#include "rf_config.h";
 
 //Define settings
-const int INPUT_PIN = 12;             //Input pin
 const unsigned int MAX_SAMPLE = 1024; //Maximum number of samples to record
+const unsigned int WORD_BYTES = 8;
 
 //Variables used in the ISR
 volatile boolean running = false;
@@ -35,11 +39,56 @@ volatile unsigned int count = 0;
 volatile unsigned long samples[MAX_SAMPLE];
 volatile boolean found_transition = false;
 
+WiFiClient espClient;
+PubSubClient client(espClient);
+char msg[WORD_BYTES * 3];
+
 void setup() {
   pinMode(INPUT_PIN, INPUT);
   Serial.begin(9600);
   while (!Serial) {yield();};
   Serial.println("\nRF decode sketch started");
+
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+}
+
+void setup_wifi() {
+
+  delay(10);
+  // We start by connecting to a WiFi network
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void reconnect() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    if (client.connect(clientID)) {
+      Serial.println("connected");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
 }
 
 void loop() {
@@ -49,7 +98,14 @@ void loop() {
   get_data();
   detachInterrupt(INPUT_PIN);
   //print_data();
+
+  if (!client.connected()) {
+    reconnect();
+  }
+
   decode_data();
+
+  client.loop();
 }
 
 /*
@@ -173,7 +229,7 @@ void sync(){
  * Get data pulse durations and store in samples.
  *
  * Gets all data pulses ready for decode. Will detect
- * the end of our 65bit word and receive the re-sync 
+ * the end of our 65bit word and receive the re-sync
  * signal before continuing.
  */
 void get_data(){
@@ -218,7 +274,7 @@ void get_data(){
  *       MQTT probably.
  */
 void decode_data() {
-  byte data[MAX_SAMPLE];
+  byte data[WORD_BYTES];
   byte current = 0, bitval = 0;
   int pos = 0, bytecount = 0;
   while (pos + 1 < count){
@@ -234,19 +290,23 @@ void decode_data() {
       pos += 2;
     }
     data[bytecount] = current;
+    sprintf(msg + (bytecount * 2), "%02x", current);
 
     bytecount++;
 
-    if (bytecount > 0 && (bytecount % 8 == 0)) {
+    if (bytecount >= WORD_BYTES) {
+      // End of word
+      client.publish(outTopic, msg);
+      for (int i=0; i< bytecount; i++){
+        Serial.println(data[i], HEX);
+      }
+      Serial.println("");
       // skip checksum bit
       pos += 2;
+      bytecount = 0;
     }
   }
 
-  for (int i=0; i< bytecount; i++){
-    Serial.println(data[i], HEX);
-  }
-  Serial.println("");
 }
 
 /*

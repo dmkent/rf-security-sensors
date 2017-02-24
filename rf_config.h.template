@@ -1,0 +1,9 @@
+/*
+ * Define settings that should not be in version control
+ */
+const char* ssid = "YOUR_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
+const char* mqtt_server = "ADDRESS_OF_MQTT_BROKER";
+const char* clientID = "zeus-sensors";
+const char* outTopic = "MQTT_TOPIC";
+const int INPUT_PIN = 12;
