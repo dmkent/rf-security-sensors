@@ -7,3 +7,18 @@ const char* mqtt_server = "ADDRESS_OF_MQTT_BROKER";
 const char* clientID = "zeus-sensors";
 const char* outTopic = "MQTT_TOPIC";
 const int INPUT_PIN = 12;
+
+
+/*
+ * Config for sensors to trigger on
+ */
+const int num_sensors = 2;
+typedef struct {
+  unsigned char code[8];  // The 8 byte sensor code
+  char* topic;            // The MQTT topic to identify the sensor
+} SENSOR_IDENT;
+
+const SENSOR_IDENT sensor_codes[] = {
+  {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, "door1"},
+  {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, "door2"}
+};

@@ -41,7 +41,6 @@ volatile boolean found_transition = false;
 
 WiFiClient espClient;
 PubSubClient client(espClient);
-char msg[WORD_BYTES * 3];
 
 void setup() {
   pinMode(INPUT_PIN, INPUT);
@@ -290,17 +289,11 @@ void decode_data() {
       pos += 2;
     }
     data[bytecount] = current;
-    sprintf(msg + (bytecount * 2), "%02x", current);
-
     bytecount++;
 
     if (bytecount >= WORD_BYTES) {
       // End of word
-      client.publish(outTopic, msg);
-      for (int i=0; i< bytecount; i++){
-        Serial.println(data[i], HEX);
-      }
-      Serial.println("");
+      processWord(data);
       // skip checksum bit
       pos += 2;
       bytecount = 0;
@@ -309,6 +302,26 @@ void decode_data() {
 
 }
 
+void processWord(byte *data){
+  char topic[50] = "";
+
+  // Search configured sensors to see if it is registered
+  for (int i=0; i < num_sensors; i++) {
+    if(memcmp(data, sensor_codes[i].code, WORD_BYTES) == 0) {
+      // Found a match...
+      strcat(topic, outTopic);
+      strcat(topic, "/");
+      strcat(topic, sensor_codes[i].topic);
+
+      client.publish(topic, "on");
+    }
+  }
+
+  for (int i=0; i < WORD_BYTES; i++){
+    Serial.println(data[i], HEX);
+  }
+  Serial.println("");
+}
 /*
  * Debug function, prints pulse lengths to serial.
  */
