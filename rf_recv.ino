@@ -25,6 +25,7 @@
  */
 #include <PubSubClient.h>
 #include <ESP8266WiFi.h>
+#include <Ticker.h>
 
 #include "rf_config.h";
 
@@ -38,9 +39,11 @@ volatile unsigned long last = 0;
 volatile unsigned int count = 0;
 volatile unsigned long samples[MAX_SAMPLE];
 volatile boolean found_transition = false;
+volatile boolean send_off_queued[num_sensors];
 
 WiFiClient espClient;
 PubSubClient client(espClient);
+Ticker ticker;
 
 void setup() {
   pinMode(INPUT_PIN, INPUT);
@@ -50,6 +53,11 @@ void setup() {
 
   setup_wifi();
   client.setServer(mqtt_server, 1883);
+
+  // initalise array
+  for (int i=0; i < num_sensors; i++){
+    send_off_queued[i] = false;
+  }
 }
 
 void setup_wifi() {
@@ -314,6 +322,12 @@ void processWord(byte *data){
       strcat(topic, sensor_codes[i].topic);
 
       client.publish(topic, "on");
+
+      // Schedule a corresponding "off"
+      if (!send_off_queued[i]){
+        ticker.once(3.0, sendOffMessage, i);
+        send_off_queued[i] = true;
+      }
     }
   }
 
@@ -322,6 +336,17 @@ void processWord(byte *data){
   }
   Serial.println("");
 }
+
+void sendOffMessage(int sensor_number){
+  char topic[50] = "";
+  strcat(topic, outTopic);
+  strcat(topic, "/");
+  strcat(topic, sensor_codes[sensor_number].topic);
+
+  client.publish(topic, "off");
+  send_off_queued[sensor_number] = false;
+}
+
 /*
  * Debug function, prints pulse lengths to serial.
  */
