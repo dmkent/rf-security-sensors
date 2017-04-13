@@ -23,75 +23,90 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
+// Define this to enable serial output
+// #define DEBUG_RX
+
+#include "rf_zeus_rx.h"
 #include <PubSubClient.h>
 #include <ESP8266WiFi.h>
 #include <Ticker.h>
 
-#include "rf_config.h";
-
-//Define settings
-const unsigned int MAX_SAMPLE = 1024; //Maximum number of samples to record
-const unsigned int WORD_BYTES = 8;
-
-//Variables used in the ISR
-volatile boolean running = false;
-volatile unsigned long last = 0;
-volatile unsigned int count = 0;
-volatile unsigned long samples[MAX_SAMPLE];
-volatile boolean found_transition = false;
-volatile boolean send_off_queued[num_sensors];
+#include "rf_config.h"
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 Ticker ticker;
+RF_ZEUS_RX radio(INPUT_PIN);
 
 void setup() {
-  pinMode(INPUT_PIN, INPUT);
-  Serial.begin(9600);
-  while (!Serial) {yield();};
-  Serial.println("\nRF decode sketch started");
+  wifi_down();
 
-  setup_wifi();
+  radio.init();
+#ifdef DEBUG_RX
+  Serial.begin(115200);
+  while (!Serial) {yield();};
+  Serial.println("\nRF probe sketch started");
+#endif
+
   client.setServer(mqtt_server, 1883);
 
-  // initalise array
-  for (int i=0; i < num_sensors; i++){
-    send_off_queued[i] = false;
-  }
+  pinMode(2, OUTPUT);
+  digitalWrite(2, HIGH);
 }
 
-void setup_wifi() {
+void wifi_down() {
+  WiFi.forceSleepBegin();          // turn off ESP8266 RF
+  delay(1);                        // give RF section time to shutdown
+}
 
+void wifi_up() {
   delay(10);
   // We start by connecting to a WiFi network
+  WiFi.forceSleepWake();
+  WiFi.mode(WIFI_STA);  
+  //wifi_station_connect();
+  delay(1);
+
+#ifdef DEBUG_RX
   Serial.println();
   Serial.print("Connecting to ");
   Serial.println(ssid);
+#endif
 
   WiFi.begin(ssid, password);
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
+#ifdef DEBUG_RX
     Serial.print(".");
+#endif
   }
 
+#ifdef DEBUG_RX
   Serial.println("");
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
-}
+#endif
 
-void reconnect() {
+  // Now get MQTT client connected to server
   // Loop until we're reconnected
   while (!client.connected()) {
+#ifdef DEBUG_RX
     Serial.print("Attempting MQTT connection...");
+#endif
     // Attempt to connect
     if (client.connect(clientID)) {
+#ifdef DEBUG_RX
       Serial.println("connected");
+#endif
     } else {
+#ifdef DEBUG_RX
       Serial.print("failed, rc=");
       Serial.print(client.state());
       Serial.println(" try again in 5 seconds");
+#endif
       // Wait 5 seconds before retrying
       delay(5000);
     }
@@ -99,275 +114,69 @@ void reconnect() {
 }
 
 void loop() {
-  attachInterrupt(INPUT_PIN, transition, CHANGE);
-  sync();
-  count = 0;
-  get_data();
-  detachInterrupt(INPUT_PIN);
-  //print_data();
+  byte buf[9 * 100];
+  unsigned int buflen = sizeof(buf);
+  unsigned int nmessages = 0, mess_len = 0;
+  
+  wifi_down();
+#ifdef DEBUG_RX
+  Serial.println("Waiting for signal...");
+#endif
+  radio.wait_until_avail();
+  
+  digitalWrite(2, LOW);
+  radio.receive(&nmessages, &mess_len, buf);
 
-  if (!client.connected()) {
-    reconnect();
+  wifi_up();
+  
+  transmit_data(nmessages, mess_len, buf);
+  
+  digitalWrite(2, HIGH);
+
+  // let everything catch up
+  for (int j=0; j< 4; j++) {
+    delay(500);
+    client.loop();
+    yield();
   }
 
-  decode_data();
-
-  client.loop();
+#ifdef DEBUG_RX
+  Serial.println("done.");
+#endif
+  client.disconnect();
 }
 
 /*
- * The ISR used to flag we've had a transition on the input.
+ * Transmit decoded data, word by word.
  */
-void transition() {
-  found_transition = true;
-}
-
-/*
- * Method to block until we change state on input.
- *
- * Note the yield statement; the ESP8266 has a watchdog timer
- * that will reboot the system if we block too long. The yield
- * allows the system to go and do other things, such as maintain
- * wifi.
- */
-inline void block_until_transition() {
-    found_transition = false;
-    while (!found_transition) {
-      yield();
-    }
-}
-
-/*
- * Look for a "resync" signal on the input.
- *
- * Returns true if one found, false otherwise.
- *
- * Signal expected is 11 pairs of pulses followed
- * by one single longer pair.
- */
-boolean get_resync_signal() {
-    int current = 0, period = 0;
-    boolean failed = false;
-
-    for(int i=0; i <= 10; i++){
-      block_until_transition();
-      current = micros();
-      period = current - last;
-      if ((period < 300) | (period > 420)){
-        failed = true;
-        break;
-      }
-      last = current;
-
-      block_until_transition();
-      current = micros();
-      period = current - last;
-      if ((period < 370) | (period > 480)){
-        failed = true;
-        break;
-      }
-      last = current;
-    }
-
-    if (failed) {
-      return true;
-    }
-
-    block_until_transition();
-    current = micros();
-    period = current - last;
-    if ((period < 300) | (period > 420)){
-      return true;
-    }
-    last = current;
-
-    block_until_transition();
-    current = micros();
-    period = current - last;
-    if ((period < 3700) | (period > 4100)){
-      return true;
-    }
-    last = current;
-
-    return failed;
-}
-
-/*
- * Block until a full "sync"/preamble signal is detected.
- *
- * This function will block (apart for calls to yield()) until
- * we detect a full signal preamble. This consists of one long pulse
- * (around 17ms) followed by a 1250us pulse and a resync sequence.
- *
- * When this method returns we are ready to receive data.
- */
-void sync(){
-  int current, period = 0;
-  boolean failed = false;
-
-  while (true) {
-    last = micros();
-    block_until_transition();
-    current = micros();
-    period = current - last;
-    if ((period < 16000) | (period > 18000)){
-      continue;
-    }
-    last = current;
-
-    block_until_transition();
-    current = micros();
-    period = current - last;
-    if ((period < 1200) | (period > 1350)){
-      continue;
-    }
-    last = current;
-
-    failed = get_resync_signal();
-    if (failed) {
-      continue;
-    }
-
-    break;
-  }
-}
-
-/*
- * Get data pulse durations and store in samples.
- *
- * Gets all data pulses ready for decode. Will detect
- * the end of our 65bit word and receive the re-sync
- * signal before continuing.
- */
-void get_data(){
-  boolean failed_resync;
-  last = micros();
-  count = 0;
-  while (count < MAX_SAMPLE){
-    block_until_transition();
-    samples[count] = micros() - last;
-
-    if ((samples[count] > 14500) & (samples[count] < 15500)) {
-      // We just recorded second pulse of two pulse resync signal
-      // get rest.
-      last = micros();
-      failed_resync = get_resync_signal();
-
-      if (failed_resync) {
-        Serial.println("bailing");
-        return;
-      } else {
-        count--;
-        last = micros();
-        continue;
-      }
-    } else if (samples[count] > 200000) {
-      return;
-    }
-    last = micros();
-    count++;
-  }
-}
-
-/*
- * Decode data in samples.
- *
- * Applies simple on-off-keying (OOK) algorithm to
- * decode 64 bit sequences from samples.
- * Currently ignores 65th bit (parity bit?)
- *
- * Currently just prints decoded data to serial.
- * TODO: do something with decoded data (send via
- *       MQTT probably.
- */
-void decode_data() {
-  byte data[WORD_BYTES];
+void transmit_data(unsigned int nmessages, unsigned int mess_len, byte* data) {
   byte current = 0, bitval = 0;
   int pos = 0, bytecount = 0;
-  while (pos + 1 < count){
-    current = 0;
-    for(int bitcount=0; bitcount < 8; bitcount++){
-      if(samples[pos] > samples[pos + 1]){
-        bitval = 0;
-      } else {
-        bitval = 1;
-      }
-      current <<= 1;
-      current += bitval;
-      pos += 2;
-    }
-    data[bytecount] = current;
-    bytecount++;
-
-    if (bytecount >= WORD_BYTES) {
-      // End of word
-      processWord(data);
-      // skip checksum bit
-      pos += 2;
-      bytecount = 0;
-    }
+  for(int imess=0; imess < nmessages; imess++) {
+    processWord(data + (imess * mess_len), mess_len);
   }
-
 }
 
-void processWord(byte *data){
+/*
+ * Process transmission of a single message using MQTT client.
+ *
+ * Looks up each word in sensor_codes and sends "on" to appropriate
+ * MQTT topic.
+ */
+void processWord(byte *data, unsigned int nbytes){
   char topic[50] = "";
 
   // Search configured sensors to see if it is registered
   for (int i=0; i < num_sensors; i++) {
-    if(memcmp(data, sensor_codes[i].code, WORD_BYTES) == 0) {
+    topic[0] = '\0';
+
+    if(memcmp(data, sensor_codes[i].code, nbytes - 1) == 0) {
       // Found a match...
       strcat(topic, outTopic);
       strcat(topic, "/");
       strcat(topic, sensor_codes[i].topic);
-
+      
       client.publish(topic, "on");
-
-      // Schedule a corresponding "off"
-      if (!send_off_queued[i]){
-        ticker.once(3.0, sendOffMessage, i);
-        send_off_queued[i] = true;
-      }
     }
   }
-
-  for (int i=0; i < WORD_BYTES; i++){
-    Serial.println(data[i], HEX);
-  }
-  Serial.println("");
-}
-
-void sendOffMessage(int sensor_number){
-  char topic[50] = "";
-  strcat(topic, outTopic);
-  strcat(topic, "/");
-  strcat(topic, sensor_codes[sensor_number].topic);
-
-  client.publish(topic, "off");
-  send_off_queued[sensor_number] = false;
-}
-
-/*
- * Debug function, prints pulse lengths to serial.
- */
-void print_data(){
-  int startState = 0;
-  Serial.print("I recorded ");
-  Serial.print(count);
-  Serial.println(" samples");
-  for (unsigned int x = 0; x < count; x++) {
-    Serial.print("Pin = ");
-    if (startState == 0) {
-      Serial.print("Low ");
-    } else {
-      Serial.print("High");
-    }
-    startState = !startState;
-    Serial.print(" for ");
-    Serial.print(samples[x]);
-    Serial.println(" usec");
-    yield();
-  }
-
-  Serial.println("");
 }

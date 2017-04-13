@@ -4,10 +4,6 @@
  *
  * See the README.md for more details.
  *
- * Initially inspired by this forum post:
- *
- *   http://forum.arduino.cc/index.php?topic=242010.msg1738702#msg1738702
- *
  * Copyright 2017 David M Kent.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -103,7 +99,6 @@ class RF_ZEUS_RX {
   void _print_data();
   
   void _send_data();
-  void _decode_data();
 
   /*
    * Method to block until we change state on input.

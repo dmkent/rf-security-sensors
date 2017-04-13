@@ -4,10 +4,6 @@
  *
  * See the README.md for more details.
  *
- * Initially inspired by this forum post:
- *
- *   http://forum.arduino.cc/index.php?topic=242010.msg1738702#msg1738702
- *
  * Copyright 2017 David M Kent.
  *
  * This program is free software: you can redistribute it and/or modify
@@ -50,7 +46,29 @@ void RF_ZEUS_RX::wait_until_avail() {
 void RF_ZEUS_RX::receive(unsigned int* nmessages, unsigned int* mes_len, byte* buf) {
   //print_data();
   //send_data();
-  _decode_data();
+  int pos = 0;
+  bool res = false;
+  byte* current_mess_start = buf;
+  *mes_len = MESSAGE_BYTE_LEN;
+  *nmessages = 0;
+  while(pos + PREAMBLE_LEN + MESSAGE_LEN < count) {
+    if (_preamble_valid(pos)) {
+      for(int i=0; i < MESSAGE_BYTE_LEN; i++){
+        *(current_mess_start + i) = 0;
+      }
+      
+      res = _decode_message(pos + PREAMBLE_LEN, current_mess_start);
+
+//#ifdef DEBUG_RX
+//      if (res) {
+        _send_message(current_mess_start);
+//      }
+//#endif
+      (*nmessages)++;
+      current_mess_start += MESSAGE_BYTE_LEN;
+    }
+    pos += PREAMBLE_LEN + MESSAGE_LEN + 1;
+  }
 }
 
 /*
@@ -239,36 +257,17 @@ bool RF_ZEUS_RX::_decode_message(int start, byte* message){
 }
 
 void RF_ZEUS_RX::_send_message(byte* message) {
-  Serial.println("start");
-  // send count
+  //Serial.println("start");
   for (int i=0; i < MESSAGE_BYTE_LEN; ++i)
   {
     //Serial.println(i);
     Serial.print((int)message[i], HEX);
+    Serial.print(" ");
     //Serial.write((int)message[i]);
     yield();
   }
   Serial.println("");
-  Serial.println("end");
-}
-
-void RF_ZEUS_RX::_decode_data() {
-  int pos = 0;
-  bool res = false;
-  byte message[MESSAGE_BYTE_LEN];
-  while(pos + PREAMBLE_LEN + MESSAGE_LEN < count) {
-    if (_preamble_valid(pos)) {
-      for(int i=0; i < MESSAGE_BYTE_LEN; i++){
-        message[i] = 0;
-      }
-      res = _decode_message(pos + PREAMBLE_LEN, (byte*)&message);
-
-      if (res) {
-        _send_message((byte*)&message);
-      }
-    }
-    pos += PREAMBLE_LEN + MESSAGE_LEN + 1;
-  }
+  //Serial.println("end");
 }
 
 /*
