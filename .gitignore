@@ -29,3 +29,5 @@ rf_config.h
 *.exe
 *.out
 *.app
+
+.build
