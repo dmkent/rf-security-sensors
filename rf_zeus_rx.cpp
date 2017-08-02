@@ -20,55 +20,22 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "rf_zeus_single.h"
 #include "rf_zeus_rx.h"
+#include "zeus_rf_core/ZeusRfDecode.h"
 
-/*
- * Need to allow interrupt to call handler method.
- */
-RF_ZEUS_RX* thisRx = nullptr;
-
-RF_ZEUS_RX::RF_ZEUS_RX(unsigned int input_pin) {
+void RF_ZEUS_RX::init(unsigned int input_pin) {
   _input_pin = input_pin;
-}
-
-void RF_ZEUS_RX::init() {  
   pinMode(_input_pin, INPUT);
-  thisRx = this;
 }
 
-void RF_ZEUS_RX::wait_until_avail() {
-  attachInterrupt(_input_pin, transition, CHANGE);
+void RF_ZEUS_RX::set_buffer(byte* buffer) {
+  this->_buffer = buffer;
   count = 0;
-  _get_data();
-  detachInterrupt(_input_pin);
 }
 
-void RF_ZEUS_RX::receive(unsigned int* nmessages, unsigned int* mes_len, byte* buf) {
-  //print_data();
-  //send_data();
-  int pos = 0;
-  bool res = false;
-  byte* current_mess_start = buf;
-  *mes_len = MESSAGE_BYTE_LEN;
-  *nmessages = 0;
-  while(pos + PREAMBLE_LEN + MESSAGE_LEN < count) {
-    if (_preamble_valid(pos)) {
-      for(int i=0; i < MESSAGE_BYTE_LEN; i++){
-        *(current_mess_start + i) = 0;
-      }
-      
-      res = _decode_message(pos + PREAMBLE_LEN, current_mess_start);
-
-//#ifdef DEBUG_RX
-//      if (res) {
-        _send_message(current_mess_start);
-//      }
-//#endif
-      (*nmessages)++;
-      current_mess_start += MESSAGE_BYTE_LEN;
-    }
-    pos += PREAMBLE_LEN + MESSAGE_LEN + 1;
-  }
+unsigned int RF_ZEUS_RX::get_byte_count() {
+  return count;
 }
 
 /*
@@ -80,7 +47,7 @@ void RF_ZEUS_RX::handle_interrupt() {
     found_transition = true;
     is_high = new_state;
   }
-  
+
 }
 
 /*
@@ -100,181 +67,91 @@ inline void RF_ZEUS_RX::_block_until_transition() {
 
 
 /*
- * Get data pulse durations and store in samples.
- *
- * Gets all data pulses ready for decode. Will detect
- * the end of our 65bit word and receive the re-sync
- * signal before continuing.
+ * Get pair of transitions and store in passed pointers.
  */
-void RF_ZEUS_RX::_get_data(){
-  count = 0;
+void RF_ZEUS_RX::get_transition_pair(unsigned long* pos_start, unsigned long* pos_end,
+                                     unsigned long* width_high, unsigned long* width_low){
+  unsigned long middle;
+  (*pos_start) = micros();
+  _block_until_transition();
+  middle = micros();
+  (*width_high) = middle - (*pos_start);
+  _block_until_transition();
+  (*pos_end) = micros();
+  (*width_low) = (*pos_end) - middle;
 
-  // Get initial signal
-  int current, period = 0;
-  int reps_required;
-  boolean failed = false;
+}
 
-  while (true) {
-    count = 0;
-    last = micros();
+/*
+ * Advance position until we hit a HIGH pulse.
+ */
+void RF_ZEUS_RX::advance_to_high_pulse(){
+  if (!is_high) {
     _block_until_transition();
-    current = micros();
-    period = current - last;
-    samples[count++] = period;
-    //if ((period < 19400) | (period > 19700)){
-    if ((period < 16000) | (period > 21000)){
-      continue;
-    }
-    last = current;
-
-    reps_required = 10;
-    
-    _block_until_transition();
-    current = micros();
-    period = current - last;
-    samples[count] = period;
-    last = current;
-
-    //Serial.println(period);
-    if ((samples[count] > 1200) && (samples[count] < 1350)){
-      // don't keep this record, but we don't fail yet
-      // door sensors have this extra pulse.
-    } else {
-      // keep it and this means we need one less later
-      reps_required--;
-      count++;
-    }
-    
-    failed = false;
-    for(int i=0; i < reps_required; i++){
-      _block_until_transition();
-      current = micros();
-      period = current - last;
-      samples[count++] = period;
-      //Serial.println(period);
-      if ((period < 350) | (period > 600)){
-        failed = true;
-        break;
-      }
-      last = current;
-    }
-
-    if (! failed){
-      break;
-    }
-  }
-
-  bool skip = false;
-  
-  while (count < MAX_SAMPLE){
-    _block_until_transition();
-    current = micros();
-    period = current - last;
-
-    if (skip) {
-      skip = false;
-      continue;
-    } else if (period < 250) {
-      skip = true;
-      continue;
-    } else if (period > 100000) {
-      break;
-    }
-    samples[count] = period;
-    count++;
-    last = current;
   }
 }
 
 /*
- * Decode data in samples.
- *
- * Applies simple on-off-keying (OOK) algorithm to
- * decode 64 bit sequences from samples.
- * Currently ignores 65th bit (parity bit?)
- *
- * Currently just prints decoded data to serial.
- * TODO: do something with decoded data (send via
- *       MQTT probably.
+ * Handle recieve of sync bit
  */
-void RF_ZEUS_RX::_send_data() {
-  byte current = 0;
-  int pos = 0, bytecount = 0;
-  Serial.println("start");
-  // send count
-  for (int i=0; i<4; ++i)
-  {
-    current = (byte)((count >> (8 * i)) & 0xff);
-    Serial.write((int)current);
-  }
-  while (pos < count){
-
-    for (int i=0; i<4; ++i)
-    {
-      current = (byte)((samples[pos] >> (8 * i)) & 0xff);
-      Serial.write((int)current);
-    }
-    pos++;
-    yield();
-  }
-  Serial.println("end");
+void RF_ZEUS_RX::handle_sync_bit(unsigned long pos) {
+  return;
 }
 
-bool RF_ZEUS_RX::_preamble_valid(int pos){
-  return true;  
+/*
+ * Handle a completed decoded data byte
+ */
+void RF_ZEUS_RX::handle_data_byte(unsigned long byte_start, unsigned long byte_end, byte data) {
+  _buffer[count++] = data;
 }
 
-bool RF_ZEUS_RX::_decode_message(int start, byte* message){
-  byte val;
-  unsigned long left, right;
-  int firsttrans;
-  bool bitval;
-  for(size_t ibyte=0; ibyte < MESSAGE_BYTE_LEN; ibyte++){
-    val = 0;
-    for(int ibit=0; ibit < 8; ibit++){
-      firsttrans = 2 * ((8 * ibyte) + ibit);
-      if ((firsttrans + 1) > MESSAGE_LEN) {
-        break;
-      }
-      right = samples[start + firsttrans + 1];
-      left = samples[start + firsttrans];
-      if ((200 > left > 1000) || (200 > right > 1000)) {
-        // period too short or too long.
-        return false;
-      }
-      bitval = right > left;
-      /*Serial.println(ibyte);
-      Serial.println(ibit);
-      Serial.println(left);
-      Serial.println(right);
-      Serial.println();*/
-      val <<= 1;
-      val += (int)bitval;
-    }
-    message[ibyte] = val;
-  }
-  return true;
-}
-
-void RF_ZEUS_RX::_send_message(byte* message) {
-  //Serial.println("start");
-  for (int i=0; i < MESSAGE_BYTE_LEN; ++i)
-  {
-    //Serial.println(i);
-    Serial.print((int)message[i], HEX);
-    Serial.print(" ");
-    //Serial.write((int)message[i]);
-    yield();
-  }
-  Serial.println("");
-  //Serial.println("end");
-}
+/*
+ * Need to allow interrupt to call handler method.
+ */
+RF_ZEUS_RX radio;
 
 /*
  * ISR - proxies to handle_interrupt.
  */
 void transition() {
-  if (thisRx != nullptr)
-    thisRx->handle_interrupt();
+    radio.handle_interrupt();
 }
 
+void _single_advance_to_high() {
+    radio.advance_to_high_pulse();
+}
+
+void _single_get_pair(unsigned long* pos_start, unsigned long* pos_end,
+                      unsigned long* width_high, unsigned long* width_low) {
+    radio.get_transition_pair(pos_start, pos_end, width_high, width_low);
+}
+
+void _single_mark_byte(unsigned long byte_start, unsigned long byte_end, byte data) {
+    radio.handle_data_byte(byte_start, byte_end, data);
+}
+
+void _single_mark_sync(unsigned long pos){
+    return;
+}
+
+void init_radio(unsigned int input_pin){
+    radio.init(input_pin);
+}
+
+unsigned long wait_for_data(){
+    return block_until_data(
+        &_single_advance_to_high,
+        &_single_get_pair,
+        &_single_mark_sync
+    );
+}
+
+void get_data(unsigned int* nbytes, byte* data){
+    radio.set_buffer(data);
+    receive_and_process_data(
+        0,
+        &_single_get_pair,
+        &_single_mark_byte
+    );
+    (*nbytes) = radio.get_byte_count();
+}

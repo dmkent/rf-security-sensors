@@ -1,0 +1,3 @@
+[submodule "zeus_rf_core"]
+	path = zeus_rf_core
+	url = https://github.com/dmkent/zeus-rf-core.git

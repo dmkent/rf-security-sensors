@@ -23,82 +23,66 @@
 #define RF_ZEUS_RX_h
 
 #include <Arduino.h>
-  
-//Define settings
-#define MAX_SAMPLE 3000 // Maximum number of samples (transitions, 
-                        // nominally two per bit) to record
 
 /*
  * Radio access class. Provides functionality to block until we receive a valid
  * signal then a method to read the resulting payload bytes out.
  *
  * Note: this relies heavily on near real-time interrupts on pin transition. As a
- *       result this generally needs the WiFi module powered down to achieve 
+ *       result this generally needs the WiFi module powered down to achieve
  *       reasonable performance. This can be done with WiFi.forceSleepBegin()
  */
 class RF_ZEUS_RX {
   public:
-
-  /*
-   * Constructor. Takes receiver digital input pin as argument.
-   */
-  RF_ZEUS_RX(unsigned int input_pin);
-
   /*
    * Initialise the radio module.
    *
    * Should generally be called in setup().
    */
-  void init();
+  void init(unsigned int input_pin);
 
-  /*
-   * Block until singal received.
-   *
-   * Calls yield() as appropriate to ensure watchdog timer stays happy.
-   *
-   * Buffers received data until receive is called.
-   */
-  void wait_until_avail();
+  void set_buffer(byte* buffer);
 
-  /*
-   * Decode received signal and write resulting bytes back into buf.
-   */
-  void receive(unsigned int* nmessages, unsigned int* mes_len, byte* buf);
+  unsigned int get_byte_count();
 
   /*
    * Do not call manually. Used internally to handle transition interrups.
    */
   void handle_interrupt();
-  
-  private:
-  
-  //Variables used in the ISR
-  volatile unsigned long last = 0;
-  volatile unsigned int count = 0;
-  volatile unsigned long samples[MAX_SAMPLE];
 
-  volatile boolean found_transition = false;
-  volatile boolean is_high = true;
-  volatile boolean new_state = true;
+  void get_transition_pair(unsigned long* pos_start, unsigned long* pos_end,
+                           unsigned long* width_high, unsigned long* width_low);
+
+  /*
+   * Advance position until we hit a HIGH pulse.
+   */
+  void advance_to_high_pulse();
+
+  /*
+   * Handle recieve of sync bit
+   */
+  void handle_sync_bit(unsigned long pos);
+
+  /*
+   * Handle a completed decoded data byte
+   */
+  void handle_data_byte(unsigned long byte_start, unsigned long byte_end, byte data);
+
+  private:
 
   int PREAMBLE_LEN = 25;
   int MESSAGE_LEN = 130;
   int MESSAGE_BYTE_LEN = 9;
-  
+
+  unsigned int count = 0;
+  byte* _buffer;
+
+  //Variables used in the ISR
+  volatile boolean found_transition = false;
+  volatile boolean is_high = true;
+  volatile boolean new_state = true;
+
   unsigned int _input_pin;
-
-  /*
-   * Get data pulse durations and store in samples.
-   *
-   * Gets all data pulses ready for decode. Will detect
-   * the end of our 65bit word and receive the re-sync
-   * signal before continuing.
-   */
-  void _get_data();
-
-  void _print_data();
-  
-  void _send_data();
 
   /*
    * Method to block until we change state on input.
@@ -109,12 +93,6 @@ class RF_ZEUS_RX {
    * wifi.
    */
    inline void _block_until_transition();
-
-   bool _preamble_valid(int pos);
-
-   bool _decode_message(int start, byte* message);
-
-   void _send_message(byte* message);
 };
 
 /*
