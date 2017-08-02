@@ -22,7 +22,7 @@
 
 #include "rf_zeus_single.h"
 #include "rf_zeus_rx.h"
-#include "zeus_rf_core/ZeusRfDecode.h"
+#include "src/ZeusRfDecode.h"
 
 void RF_ZEUS_RX::init(unsigned int input_pin) {
   _input_pin = input_pin;
