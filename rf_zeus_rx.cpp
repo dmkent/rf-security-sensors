@@ -20,13 +20,15 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "rf_zeus_single.h"
 #include "rf_zeus_rx.h"
+#include "rf_zeus_rx_internal.h"
 #include "src/ZeusRfDecode.h"
 
 void RF_ZEUS_RX::init(unsigned int input_pin) {
   _input_pin = input_pin;
   pinMode(_input_pin, INPUT);
+
+  attachInterrupt(_input_pin, transition, CHANGE);
 }
 
 void RF_ZEUS_RX::set_buffer(byte* buffer) {
@@ -79,7 +81,6 @@ void RF_ZEUS_RX::get_transition_pair(unsigned long* pos_start, unsigned long* po
   _block_until_transition();
   (*pos_end) = micros();
   (*width_low) = (*pos_end) - middle;
-
 }
 
 /*
@@ -106,8 +107,15 @@ void RF_ZEUS_RX::handle_data_byte(unsigned long byte_start, unsigned long byte_e
 }
 
 /*
- * Need to allow interrupt to call handler method.
+ * The following are c-style functions wrapping a singleton RF_ZEUS_RX instance.
+ *
+ * This is needed to get interrupt and callback functions behaving.
+ * Full use of c++ STL std::function objects would get around this...
+ * No other simple way to pass around member functions (with pointer to 
+ * actual instance) without this kind of construct.
  */
+
+// The singleton itself.
 RF_ZEUS_RX radio;
 
 /*
@@ -131,13 +139,24 @@ void _single_mark_byte(unsigned long byte_start, unsigned long byte_end, byte da
 }
 
 void _single_mark_sync(unsigned long pos){
-    return;
+    radio.handle_sync_bit(pos);
 }
 
+
+/*
+ * Finally, the public API. Three functions from rf_zeus_rx.h, used by sketch.
+ */
+
+/*
+ * Initialise the reciever.
+ */
 void init_radio(unsigned int input_pin){
     radio.init(input_pin);
 }
 
+/*
+ * Block until we detect data preamble completion.
+ */
 unsigned long wait_for_data(){
     return block_until_data(
         &_single_advance_to_high,
@@ -146,6 +165,9 @@ unsigned long wait_for_data(){
     );
 }
 
+/*
+ * Receive, decode and write data to buffer.
+ */
 void get_data(unsigned int* nbytes, byte* data){
     radio.set_buffer(data);
     receive_and_process_data(

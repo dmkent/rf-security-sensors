@@ -30,7 +30,7 @@ typedef struct {
   const char* topic;            // The topic to identify the sensor
 } SENSOR_IDENT;
 
-#include "rf_zeus_single.h"
+#include "rf_zeus_rx.h"
 #include "rf_config.h"
 
 
