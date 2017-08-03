@@ -23,67 +23,66 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
-// Define this to enable serial output
-// #define DEBUG_RX
+#define BAUD_RATE 9600
+#define NMESS_BYTES 8
+typedef struct {
+  unsigned char code[NMESS_BYTES];  // The 8 byte sensor code
+  const char* topic;            // The topic to identify the sensor
+} SENSOR_IDENT;
 
 #include "rf_zeus_single.h"
-
 #include "rf_config.h"
 
-void setup() {
-  init_radio(INPUT_PIN);
-  Serial.begin(115200);
-  while (!Serial) {yield();};
-  Serial.println("\nRF decode sketch started");
 
-  //pinMode(2, OUTPUT);
-  //digitalWrite(2, HIGH);
+void setup() {
+  // Set up serial. We will only write resulting data to serial.
+  Serial.begin(BAUD_RATE);
+  while (!Serial) {yield();};
+  
+  // Initialise the decoder.
+  init_radio(INPUT_PIN);
+  
+  // Set up LED for recieve status 
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
 }
 
 void loop() {
-  byte buf[9 * 100];
-  unsigned int buflen = sizeof(buf);
-  unsigned int nmessages = 0, mess_len = 9;
+  byte buf[NMESS_BYTES + 20];
+  unsigned int nrecv = 0;
   
-  Serial.println("Waiting for signal...");
+  // Wait for some data to arrive (actually waits for preamble to finish)
   wait_for_data();
   
-  //digitalWrite(2, LOW);
-  get_data(&nmessages, buf);
+  // About to receive, turn LED on
+  digitalWrite(LED_PIN, HIGH);
 
-  transmit_data(nmessages, mess_len, buf);
-  
-  //digitalWrite(2, HIGH);
+  // Get the incoming data, bytes get written to buf.
+  get_data(&nrecv, buf);
 
-  Serial.println("done.");
-}
-
-/*
- * Transmit decoded data, word by word.
- */
-void transmit_data(unsigned int nmessages, unsigned int mess_len, byte* data) {
-  byte current = 0, bitval = 0;
-  int pos = 0, bytecount = 0;
-  for(int imess=0; imess < nmessages; imess = imess + mess_len) {
-    processWord(data + (imess * mess_len), mess_len);
+  if (nrecv >= NMESS_BYTES) {
+    // Received a full message (NMESS_BYTES)
+    decode_message(buf);
   }
+
+  digitalWrite(LED_PIN, LOW);
 }
 
+
 /*
- * Process transmission of a single message using MQTT client.
+ * Decode message by looking up in configured sensor_codes.
  *
- * Looks up each word in sensor_codes and sends "on" to appropriate
- * MQTT topic.
+ * Prints found sensor_code to Serial if found.
+ *
  */
-void processWord(byte *data, unsigned int nbytes){
+void decode_message(byte *data){
   char topic[50] = "";
 
   // Search configured sensors to see if it is registered
   for (int i=0; i < num_sensors; i++) {
     topic[0] = '\0';
 
-    if(memcmp(data, sensor_codes[i].code, nbytes - 1) == 0) {
+    if(memcmp(data, sensor_codes[i].code, NMESS_BYTES) == 0) {
       // Found a match...
       strcat(topic, outTopic);
       strcat(topic, "/");
