@@ -28,7 +28,7 @@ void RF_ZEUS_RX::init(unsigned int input_pin) {
   _input_pin = input_pin;
   pinMode(_input_pin, INPUT);
 
-  attachInterrupt(_input_pin, transition, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(_input_pin), transition, CHANGE);
 }
 
 void RF_ZEUS_RX::set_buffer(byte* buffer) {
