@@ -5,6 +5,9 @@ const char* outTopic = "security";
 const int INPUT_PIN = 12;
 const int LED_PIN = 13;
 
+/* Un-comment to enable debug to serial. */
+//#define DEBUG
+
 /*
  * Config for sensors to trigger on
  */

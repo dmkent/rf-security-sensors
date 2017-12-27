@@ -33,6 +33,13 @@ typedef struct {
 #include "rf_zeus_rx.h"
 #include "rf_config.h"
 
+#ifdef DEBUG
+    #define DEBUG_PRINTLN(x) Serial.println(x)
+    #define DEBUG_PRINTHEX(x) Serial.print(x, HEX)
+#else
+    #define DEBUG_PRINTLN(x)
+    #define DEBUG_PRINTHEX(x)
+#endif
 
 void setup() {
   // Set up serial. We will only write resulting data to serial.
@@ -45,6 +52,8 @@ void setup() {
   // Set up LED for recieve status 
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
+
+  DEBUG_PRINTLN("initialised");
 }
 
 void loop() {
@@ -52,14 +61,15 @@ void loop() {
   unsigned int nrecv = 0;
   
   // Wait for some data to arrive (actually waits for preamble to finish)
+  DEBUG_PRINTLN("waiting");
   wait_for_data();
   
   // About to receive, turn LED on
   digitalWrite(LED_PIN, HIGH);
+  DEBUG_PRINTLN("got data");
 
   // Get the incoming data, bytes get written to buf.
   get_data(&nrecv, buf);
-
   if (nrecv >= NMESS_BYTES) {
     // Received a full message (NMESS_BYTES)
     decode_message(buf);
@@ -78,10 +88,17 @@ void loop() {
 void decode_message(byte *data){
   char topic[50] = "";
 
+  #ifdef DEBUG
+  for (int i=0; i < NMESS_BYTES; i++) {
+    DEBUG_PRINTHEX(data[i]);
+  }
+  DEBUG_PRINTLN("");
+  #endif
+
   // Search configured sensors to see if it is registered
   for (int i=0; i < num_sensors; i++) {
     topic[0] = '\0';
-
+    
     if(memcmp(data, sensor_codes[i].code, NMESS_BYTES) == 0) {
       // Found a match...
       strcat(topic, outTopic);
@@ -89,6 +106,8 @@ void decode_message(byte *data){
       strcat(topic, sensor_codes[i].topic);
       
       Serial.println(topic);
+      return;
     }
   }
+  DEBUG_PRINTLN("No configured sensor found.");
 }
